@@ -209,6 +209,8 @@ def submit():
     a malformed input is one of the most common real failures there is.
     """
     import detector
+    import scoring
+    import stylometry
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -244,17 +246,21 @@ def submit():
         return _reject(creator_id, 400, "text_too_short",
                        f"Send at least {config.MIN_TEXT_WORDS} words.")
 
-    content_id = str(uuid.uuid4())
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+    guess, label = scoring.score_to_label(combined_score)
+    # How far from a coin flip: 0 at 0.5, 1 at either end. Not P(AI).
+    confidence = round(2 * abs(combined_score - 0.5), 4)
 
-    # Milestone 3: one signal. Guess, confidence and label stay placeholders
-    # until the second signal, the combining rule and the labels exist.
-    guess, confidence, label = "pending", 0.0, "placeholder"
+    content_id = str(uuid.uuid4())
 
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
         guess=guess,
         model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
         label=label,
     )
 
@@ -264,7 +270,8 @@ def submit():
         "confidence": confidence,
         "label": label,
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
+        "combined_score": combined_score,
     })
 
 

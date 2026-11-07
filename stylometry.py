@@ -33,6 +33,25 @@ anything together:
 import re
 import statistics
 
+TTR_WINDOW = 50
+
+# How each measure becomes a 0-1 "more AI-like" part, and how much it counts.
+#
+# Only sentence-length spread counts for now. On the eight texts I measured
+# (see README), spread separated AI from human and the other two did not:
+# type-token ratio was HIGHEST on the clearly-AI paragraph, and punctuation
+# density ran 0.04-0.09 for AI against 0.07 for human, with a plain human
+# paragraph at 0.00 because it used only full stops. Counting punctuation would
+# have penalised exactly the writer the service most needs to protect. Both
+# stay implemented and printed; give them weight here once real data earns it.
+SPREAD_HUMAN = 0.60   # coefficient of variation at or above this reads fully human
+SPREAD_AI = 0.20      # at or below this reads fully AI
+STYLE_WEIGHTS = {"spread": 1.0, "ttr": 0.0, "punctuation": 0.0}
+
+# Spread from two or three sentences is mostly luck. Below this many sentences
+# the spread part is pulled toward 0.5 in proportion to how few there are.
+SENTENCES_FOR_FULL_TRUST = 7
+
 
 def sentences(text: str) -> list[str]:
     """Split into sentences. Rough and good enough — given to you."""
@@ -64,8 +83,14 @@ def sentence_length_spread(text: str) -> float:
     `stdev` raises on fewer than two values. Decide what that should return
     before the attack set decides for you.
     """
-    # TODO: replace this
-    return 0.0
+    lengths = [len(words(sentence)) for sentence in sentences(text)]
+    lengths = [n for n in lengths if n > 0]
+    # One sentence has no spread to measure. 0.0 is "none", which on its own
+    # would read as machine-even, so style_signal checks the count first.
+    if len(lengths) < 2:
+        return 0.0
+    mean = statistics.mean(lengths)
+    return statistics.stdev(lengths) / mean
 
 
 def type_token_ratio(text: str) -> float:
@@ -80,8 +105,19 @@ def type_token_ratio(text: str) -> float:
     directly comparable on it, and if your test inputs vary a lot in length,
     that alone can look like a signal.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    # Moving-average TTR: the ratio inside every 50-word window, averaged. A
+    # plain ratio falls as text gets longer, so a 300-word piece would look
+    # less varied than a 60-word one for no reason but length. Windowing makes
+    # texts of different lengths comparable. Under 50 words it's the plain ratio.
+    window = min(TTR_WINDOW, len(tokens))
+    ratios = [
+        len(set(tokens[i:i + window])) / window
+        for i in range(len(tokens) - window + 1)
+    ]
+    return sum(ratios) / len(ratios)
 
 
 def punctuation_density(text: str) -> float:
@@ -94,36 +130,49 @@ def punctuation_density(text: str) -> float:
         more interesting than full stops, because they vary more between
         writers.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    # Everything except the full stop: commas, semicolons, colons, dashes,
+    # brackets, quotes, question and exclamation marks. A hyphen inside a word
+    # (well-known) isn't punctuation here; one standing alone as a dash is.
+    marks = re.findall(r"[,;:()\"?!—–]|(?<=\s)-(?=\s)", text)
+    return len(marks) / len(tokens)
 
 
 # ── Combining them ───────────────────────────────────────────────────────────
 
 def style_signal(text: str) -> float:
     """
-    The style signal as a 0–1 score. **Higher means more likely AI.** ← TODO
+    The style signal as a 0-1 score. **Higher means more likely AI**, the same
+    direction as `detector.model_signal`.
 
-    Combine your three measures into one number. Same direction as
-    `detector.model_signal`, so that `scoring.combine_signals` can treat them
-    the same way — if one of your signals runs backwards, everything above it
-    is wrong in a way that's hard to see.
+    Directions: low sentence-length spread reads AI-like, so it is flipped.
+    Each measure is mapped onto 0-1 before weighting (`STYLE_WEIGHTS`), so none
+    wins just by having bigger raw numbers. Only spread has weight today.
 
-    Two things to decide and write down:
-
-      1. Which direction each measure points. Low spread means more AI-ish, so
-         it needs flipping. Work out which of your three need that.
-      2. How to get each onto a comparable scale. A raw type-token ratio sits
-         between 0 and 1; a raw punctuation count doesn't. Adding them
-         unscaled means whichever has the bigger numbers wins by default.
-
-    Test it on the four calibration inputs from Milestone 4 — clearly AI,
-    clearly human, plain conventional human writing, lightly-edited AI — before
-    you trust it. Plain and ordinary, not formal: formal prose reads as *human*
-    to signal one, and it is plain writing that gets accused.
+    A text of two or three sentences has a spread that means very little, so
+    that part is blended toward 0.5 until there are `SENTENCES_FOR_FULL_TRUST`
+    sentences. The measure can't read: see the module docstring for what that
+    costs.
     """
-    # TODO: replace this
-    return 0.5
+    n_sentences = len(sentences(text))
+
+    spread = sentence_length_spread(text)
+    spread_part = (SPREAD_HUMAN - spread) / (SPREAD_HUMAN - SPREAD_AI)
+    spread_part = min(max(spread_part, 0.0), 1.0)
+    trust = min(1.0, max(n_sentences - 1, 0) / (SENTENCES_FOR_FULL_TRUST - 1))
+    spread_part = trust * spread_part + (1 - trust) * 0.5
+
+    # Not weighted yet (see STYLE_WEIGHTS), but wired so turning one on is a
+    # one-number change. Both map "less varied" to "more AI-like".
+    ttr_part = min(max((0.90 - type_token_ratio(text)) / 0.30, 0.0), 1.0)
+    punctuation_part = min(max(1.0 - punctuation_density(text) / 0.10, 0.0), 1.0)
+
+    parts = {"spread": spread_part, "ttr": ttr_part, "punctuation": punctuation_part}
+    total = sum(STYLE_WEIGHTS.values())
+    score = sum(STYLE_WEIGHTS[k] * parts[k] for k in parts) / total
+    return round(min(max(score, 0.0), 1.0), 4)
 
 
 if __name__ == "__main__":
@@ -139,4 +188,3 @@ if __name__ == "__main__":
     print(f"type_token_ratio         {type_token_ratio(text)}")
     print(f"punctuation_density      {punctuation_density(text)}")
     print(f"style_signal             {style_signal(text)}   (higher = more likely AI)")
-    print("\nAll zeros? These are stubs — Milestone 4 is where you build them.")

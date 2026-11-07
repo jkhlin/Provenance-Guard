@@ -56,14 +56,13 @@ MAX_CREATOR_ID_CHARS = 100
 
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
-# How much each signal counts toward the combined score.
-#
-# ⚠️ These are placeholders. Milestone 4 asks you to write your combining rule
-# down BEFORE you code it, and to put the numbers in your README. Whatever you
-# decide, it goes here.
+# The combining rule (scoring.py::combine_signals): when the two signals split,
+# the one that reads MORE HUMAN counts for this much, and the more-AI one for
+# the rest. Wrongly accusing a real writer costs more than missing some AI
+# text, so the AI end has to be earned by both signals. 0.5 would be a plain
+# average. The reasoning is in the README, under "The combining rule".
 
-WEIGHT_MODEL_SIGNAL = 0.5
-WEIGHT_STYLE_SIGNAL = 0.5
+WEIGHT_MORE_HUMAN_SIGNAL = 0.75
 
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────
