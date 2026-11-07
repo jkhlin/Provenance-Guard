@@ -124,11 +124,37 @@
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "The implementation of the proposed framework requires careful consideration of several key factors. First, it is important to note that the system must be able to handle a wide variety of different inputs. Additionally, the overall performance of the solution depends on a number of important variables.", "creator_id": "jason"}'
+```
+
+> Milestone 3 state: signal one only. `style_score` is `null` and `guess`,
+> `confidence` and `label` are placeholders until the second signal, the
+> combining rule and the labels exist.
+
+```json
+{
+  "confidence": 0.0,
+  "content_id": "4931813a-b6b0-4bf3-8514-f9db3e5ce60d",
+  "guess": "pending",
+  "label": "placeholder",
+  "model_score": 0.8864,
+  "style_score": null
+}
+```
+
+A bad request, to show the refusal shape (HTTP 400):
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/submit \
+  -H "Content-Type: application/json" \
+  -d '{"text": "hi there", "creator_id": "jason"}'
 ```
 
 ```json
-
+{
+  "error": "text_too_short",
+  "message": "Send at least 20 words."
+}
 ```
 
 **An appeal**
@@ -146,11 +172,58 @@ $ curl -X POST http://127.0.0.1:5000/appeal \
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log?limit=5"
 ```
 
 ```json
-
+{
+  "count": 5,
+  "entries": [
+    {
+      "combined_score": null,
+      "content_id": "4931813a-b6b0-4bf3-8514-f9db3e5ce60d",
+      "creator_id": "jason",
+      "guess": "pending",
+      "label": "placeholder",
+      "model_score": 0.8864,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-11-07T22:48:02+00:00"
+    },
+    {
+      "combined_score": null,
+      "content_id": "1460dbef-4e71-4060-a499-5c4528ccdfd3",
+      "creator_id": "jason",
+      "guess": "pending",
+      "label": "placeholder",
+      "model_score": 0.3666,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-11-07T22:48:02+00:00"
+    },
+    {
+      "creator_id": "jason",
+      "event": "rejected",
+      "reason": "missing_field",
+      "status": "rejected",
+      "timestamp": "2026-11-07T22:48:02+00:00"
+    },
+    {
+      "creator_id": "jason",
+      "event": "rejected",
+      "reason": "text_too_short",
+      "status": "rejected",
+      "timestamp": "2026-11-07T22:48:02+00:00"
+    },
+    {
+      "creator_id": "unknown",
+      "event": "rejected",
+      "reason": "invalid_json",
+      "status": "rejected",
+      "timestamp": "2026-11-07T22:48:02+00:00"
+    }
+  ]
+}
 ```
 
 ---

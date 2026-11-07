@@ -150,6 +150,15 @@ def health():
 
 # ── YOU BUILD THIS ────────────────────────────────────────────────────────────
 
+def _reject(creator_id: str, status: int, error: str, message: str):
+    """
+    Refuse a request in the one error shape every endpoint uses, and leave a
+    trace of it in the audit log.
+    """
+    audit.log_rejection(creator_id=creator_id, reason=error)
+    return jsonify({"error": error, "message": message}), status
+
+
 @app.post("/submit")
 # @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
@@ -199,17 +208,64 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
-    payload = request.get_json(silent=True) or {}
+    import detector
 
-    # TODO: delete this and build the route.
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _reject("unknown", 400, "invalid_json",
+                       "Send a JSON object with 'text' and 'creator_id'.")
+
+    creator_id = payload.get("creator_id")
+    text = payload.get("text")
+    if not isinstance(text, str) or not isinstance(creator_id, str):
+        return _reject(creator_id if isinstance(creator_id, str) else "unknown",
+                       400, "missing_field",
+                       "Both 'text' and 'creator_id' are required, and both must be strings.")
+    creator_id = creator_id.strip()
+    if not creator_id or len(creator_id) > config.MAX_CREATOR_ID_CHARS:
+        return _reject("unknown", 400, "missing_field",
+                       f"'creator_id' must be 1 to {config.MAX_CREATOR_ID_CHARS} characters.")
+    if not text.strip():
+        return _reject(creator_id, 400, "empty_text", "The text is empty.")
+    if len(text) > config.MAX_TEXT_CHARS:
+        return _reject(creator_id, 413, "text_too_long",
+                       f"The text is over {config.MAX_TEXT_CHARS:,} characters.")
+    if len(text.split()) < config.MIN_TEXT_WORDS:
+        return _reject(creator_id, 400, "text_too_short",
+                       f"Send at least {config.MIN_TEXT_WORDS} words.")
+
+    try:
+        model_score = detector.model_signal(text)
+    except detector.DetectorUnavailable as exc:
+        app.logger.error("detector unavailable: %s", exc)
+        return _reject(creator_id, 503, "detector_unavailable",
+                       "The model that reads the text isn't available right now.")
+    except ValueError:
+        return _reject(creator_id, 400, "text_too_short",
+                       f"Send at least {config.MIN_TEXT_WORDS} words.")
+
+    content_id = str(uuid.uuid4())
+
+    # Milestone 3: one signal. Guess, confidence and label stay placeholders
+    # until the second signal, the combining rule and the labels exist.
+    guess, confidence, label = "pending", 0.0, "placeholder"
+
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        guess=guess,
+        model_score=model_score,
+        label=label,
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "guess": guess,
+        "confidence": confidence,
+        "label": label,
+        "model_score": model_score,
+        "style_score": None,
+    })
 
 
 @app.post("/appeal")
