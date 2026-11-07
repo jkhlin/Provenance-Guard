@@ -150,12 +150,12 @@ def health():
 
 # ── YOU BUILD THIS ────────────────────────────────────────────────────────────
 
-def _reject(creator_id: str, status: int, error: str, message: str):
+def _reject(creator_id: str, status: int, error: str, message: str, **extra):
     """
     Refuse a request in the one error shape every endpoint uses, and leave a
     trace of it in the audit log.
     """
-    audit.log_rejection(creator_id=creator_id, reason=error)
+    audit.log_rejection(creator_id=creator_id, reason=error, **extra)
     return jsonify({"error": error, "message": message}), status
 
 
@@ -295,14 +295,43 @@ def appeal():
     to the person on the other end. It's the only thing standing between a
     wrong accusation and nothing at all.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _reject("unknown", 400, "invalid_json",
+                       "Send a JSON object with 'content_id' and 'reasoning'.")
 
-    # TODO: delete this and build the route.
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+    if not isinstance(content_id, str) or not isinstance(reasoning, str):
+        return _reject("unknown", 400, "missing_field",
+                       "Both 'content_id' and 'reasoning' are required, and both must be strings.")
+    reasoning = reasoning.strip()
+    if not reasoning:
+        return _reject("unknown", 400, "empty_reasoning",
+                       "Tell us briefly why you think the label is wrong.")
+    if len(reasoning) > config.MAX_REASONING_CHARS:
+        return _reject("unknown", 413, "reasoning_too_long",
+                       f"Keep it under {config.MAX_REASONING_CHARS:,} characters.")
+
+    # An appeal entry shares the content_id, so look for the original decision
+    # itself, not just any entry. A typo'd id finds nothing and must say so.
+    decisions = [e for e in audit.entries_for(content_id) if e.get("event") is None]
+    if not decisions:
+        return _reject("unknown", 404, "unknown_content_id",
+                       "We couldn't find a submission with that ID. Check it and try again.",
+                       content_id=content_id[:100])
+
+    audit.log_appeal(
+        content_id=content_id,
+        creator_id=decisions[0].get("creator_id", "unknown"),
+        reasoning=reasoning,
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Your appeal has been recorded and this submission is marked as under review.",
+    })
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

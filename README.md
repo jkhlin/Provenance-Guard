@@ -111,16 +111,28 @@ Clearly-AI and clearly-human text score 0.60 apart, and formal human writing lan
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.45 | We think this was probably written by a person. |
+| unsure | 0.45 – 0.88 | We can't tell whether this was written by a person or with an AI tool. Our checks aren't reliable enough to say, so please don't read this as a judgment about your work. If it doesn't look right to you, you can appeal using your submission ID. |
+| high-confidence AI | 0.88 – 1.00 | This may have been written with an AI tool. Checks like ours often get plain, simply written text wrong, so this is not a finding. If you wrote it yourself, you can appeal using your submission ID and ask for a review. |
 
-**Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
+The ranges are `HUMAN_THRESHOLD = 0.45` and `AI_THRESHOLD = 0.88` in `config.py`; the wording is `LABELS` in `scoring.py`. A reader never sees a number, the word "confidence", or the word "threshold".
 
+**Why I worded the "unsure" one this way:** the person reading it may well have written every word, so it starts from "we can't tell" instead of "we're not sure it's yours", puts the doubt on our checks and not on their work, and says outright that it isn't a judgment about them. It also tells them what to do if it looks wrong. The "AI" label does the same job harder: "may have been", "not a finding", and a way to appeal. I would rather the label undersell the accusation than have a real writer read it as a verdict.
 
+**Where I put the thresholds, and why.** I scored fourteen texts (all written by me for testing, not by a real writer, so treat this as thin evidence):
+
+| Group | Combined scores |
+|---|---|
+| generic AI text (three paragraphs) | 0.90, 0.90, 0.91 |
+| the first clearly-AI test paragraph | 0.83 |
+| lightly-edited AI | 0.69 |
+| plain human (four paragraphs, short simple sentences) | 0.86, 0.84, 0.73, 0.57 |
+| formal human (Darwin) | 0.42 |
+| quirky human | 0.23, 0.45 |
+
+The placeholder 0.65 would have accused three of the four plain human texts. 0.88 sits in the gap between the plainest human text (0.86) and unambiguous AI text (0.90), so the AI label only fires where both signals agree strongly. **That gap is about 0.02 on each side, so this is fragile**: a plainer human text than any I tried will cross it. The price is real: the first AI paragraph (0.83) and the lightly-edited one (0.69) now land in *unsure*, not *ai*. I accept that on purpose. On the human side, 0.45 is generous because calling an AI text human is the cheap error, and it lets formal human prose reach the human label.
+
+**All three labels are reachable.** Cases I submitted: `cal_human` scored 0.23 and got the human label, a plain bus-schedule paragraph scored 0.56 and got unsure, and a generic AI paragraph scored 0.91 and got the AI label. `scoring.label_ranges()` prints the bands with no gap between them.
 
 ---
 
@@ -177,11 +189,24 @@ $ curl -X POST http://127.0.0.1:5000/submit \
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e", "reasoning": "I wrote this myself for a class. I always write in short even sentences."}'
 ```
 
 ```json
+{
+  "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
+  "message": "Your appeal has been recorded and this submission is marked as under review.",
+  "status": "under_review"
+}
+```
 
+That `content_id` came from an earlier `/submit` that was labelled AI (combined 0.9053). An appeal with a mistyped id gets a `404` and no appeal entry:
+
+```json
+{
+  "error": "unknown_content_id",
+  "message": "We couldn't find a submission with that ID. Check it and try again."
+}
 ```
 
 **What the log shows afterwards**
@@ -236,6 +261,43 @@ $ curl "http://127.0.0.1:5000/log?limit=5"
       "reason": "invalid_json",
       "status": "rejected",
       "timestamp": "2026-11-07T22:48:02+00:00"
+    }
+  ]
+}
+```
+
+And after the appeal above, `curl "http://127.0.0.1:5000/log?limit=9"`, showing only the entries for that `content_id` (the full response also held the other two submissions and four rejected requests). The log is append-only: the original decision stays `decided`, the appeal sits after it as `under_review`, and a second appeal on the same id adds a second entry instead of overwriting anything.
+
+```json
+{
+  "count": 3,
+  "entries": [
+    {
+      "combined_score": 0.9053,
+      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
+      "creator_id": "m5_ai_climate",
+      "guess": "ai",
+      "label": "This may have been written with an AI tool. Checks like ours often get plain, simply written text wrong, so this is not a finding. If you wrote it yourself, you can appeal using your submission ID and ask for a review.",
+      "model_score": 0.939,
+      "status": "decided",
+      "style_score": 0.8941,
+      "timestamp": "2026-11-07T23:02:32+00:00"
+    },
+    {
+      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
+      "creator_id": "m5_ai_climate",
+      "event": "appeal",
+      "reasoning": "I wrote this myself for a class. I always write in short even sentences.",
+      "status": "under_review",
+      "timestamp": "2026-11-07T23:02:32+00:00"
+    },
+    {
+      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
+      "creator_id": "m5_ai_climate",
+      "event": "appeal",
+      "reasoning": "Adding: I can show my drafts.",
+      "status": "under_review",
+      "timestamp": "2026-11-07T23:02:32+00:00"
     }
   ]
 }

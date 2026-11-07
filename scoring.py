@@ -43,38 +43,40 @@ def combine_signals(model_score: float, style_score: float) -> float:
     return round(w * low + (1 - w) * high, 4)
 
 
+LABELS = {
+    "human": "We think this was probably written by a person.",
+    "unsure": (
+        "We can't tell whether this was written by a person or with an AI "
+        "tool. Our checks aren't reliable enough to say, so please don't read "
+        "this as a judgment about your work. If it doesn't look right to you, "
+        "you can appeal using your submission ID."
+    ),
+    "ai": (
+        "This may have been written with an AI tool. Checks like ours often "
+        "get plain, simply written text wrong, so this is not a finding. If "
+        "you wrote it yourself, you can appeal using your submission ID and "
+        "ask for a review."
+    ),
+}
+
+
 def score_to_label(score: float) -> tuple[str, str]:
     """
     Turn a score into a guess and the text a reader actually sees.
-    ← TODO (Milestone 5)
 
-    Returns:
-        (guess, label_text) — where `guess` is a short machine-readable string
-        like "ai" / "human" / "unsure", and `label_text` is the full sentence
-        shown to a person.
+    Returns (guess, label_text): `guess` is "human" / "unsure" / "ai" and
+    `label_text` is the sentence shown to a person. The label never shows a
+    number and never says "confidence", and the two non-human labels say they
+    can be wrong and point at the appeal. The wording is in `LABELS`; the
+    reasoning is in the README under "Label Variants".
 
-    ⚠️ Write the label text for someone who has never heard the word
-    "threshold".
-
-        ✗ "human, 0.81 confidence"
-        ✓ "We think this was probably written by a person."
-
-    All three labels have to be **reachable**. If no score can produce one of
-    them, your ranges have a gap — and Milestone 5 asks you to submit text that
-    produces each one, which is how you'd find out.
-
-    The hardest one to write is "unsure". It has to admit uncertainty without
-    sounding like an accusation, because the person reading it may well have
-    written every word themselves. Your breakout asks your group what they'd
-    think if they got it on their own work. That question is the whole
-    milestone.
+    The score ranges are `config.HUMAN_THRESHOLD` and `config.AI_THRESHOLD`.
     """
-    # TODO: replace this — thresholds are in config.py
     if score >= config.AI_THRESHOLD:
-        return "ai", "PLACEHOLDER — write the high-confidence AI label."
+        return "ai", LABELS["ai"]
     if score <= config.HUMAN_THRESHOLD:
-        return "human", "PLACEHOLDER — write the high-confidence human label."
-    return "unsure", "PLACEHOLDER — write the unsure label."
+        return "human", LABELS["human"]
+    return "unsure", LABELS["unsure"]
 
 
 def label_ranges() -> list[tuple[str, str]]:

@@ -53,6 +53,7 @@ DETECTOR_MAX_TOKENS = 400
 MIN_TEXT_WORDS = 20
 MAX_TEXT_CHARS = 20_000
 MAX_CREATOR_ID_CHARS = 100
+MAX_REASONING_CHARS = 2_000   # an appeal's reasoning
 
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
@@ -78,18 +79,21 @@ WEIGHT_MORE_HUMAN_SIGNAL = 0.75
 # getting through. There is no setting that avoids the trade — only settings
 # that decide who pays for it.
 
-HUMAN_THRESHOLD = 0.35
-AI_THRESHOLD = 0.65
+# Chosen from fourteen texts I scored (see README, "Label Variants"). Generic
+# AI text combined at about 0.90. The plainest human texts combined at up to
+# 0.86. 0.88 sits in that gap, which is only about 0.02 wide each side, so
+# treat it as fragile: a plainer human text than any I tried will cross it.
+# It is high on purpose. The AI label should only fire on text both signals
+# agree about, because accusing a real writer costs far more than missing AI.
+AI_THRESHOLD = 0.88
 
-# ⚠️ One thing that catches people out in Milestone 5. A weighted average can
-# only land between its two inputs — so while `style_signal` is still the stub
-# returning 0.5, the combined score can never leave 0.25–0.75 no matter what
-# the model signal says, and the human label needs a model score below 0.20 to
-# be reachable at all.
-#
-# If a label you can't reach is the problem, the fix is upstream of the
-# thresholds: a style signal that actually varies. `scoring.label_ranges()`
-# prints the bands; the reachable range is a different question.
+# Human is the cheap error to make, so this is set generously: formal human
+# prose (0.42) and a quirky human paragraph (0.45) both need to reach it.
+HUMAN_THRESHOLD = 0.45
+
+# Every label has to be reachable, and `scoring.label_ranges()` prints the
+# bands. Reaching "ai" needs BOTH signals high, because combine_signals leans
+# toward the more-human one.
 
 
 # ─── Rate limiting (UNIT 8) ──────────────────────────────────────────────────
