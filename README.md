@@ -265,25 +265,45 @@ I built this with Claude Code, which wrote most of the code and drafts in this r
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 50 per day (`RATE_LIMIT_PER_MINUTE` and `RATE_LIMIT_PER_DAY` in `config.py`, applied to `POST /submit`).
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+A real writer submits a piece once, then maybe resubmits a few times after editing, so 5 in a minute is more than they'll ever send and 50 in a day covers a heavy revising session. Nobody legitimate gets near it. A script trying to map my thresholds needs hundreds of probes, and every probe costs a model run of a second or two, so 50 a day stretches a thousand-variation sweep from minutes to weeks for any one caller. I went lower than the starter's 10 and 200 because those would let a script send 200 probes a day, which is plenty to find a threshold that sits only 0.02 from plain human writing. I did not go lower still, because a writer who gets a 429 on their own work is being punished for the scoring service's weakness.
+
+**What a caller counts as:** the `creator_id` in the request body, falling back to the caller's address when there isn't one (the starter's `rate_limit_key`). That fails in a specific way, which I tested: twelve requests sent as twelve *different* `creator_id`s all got through, while twelve under one id hit the limit after five.
+
+```
+12 requests, a new creator_id each time:  400 400 400 400 400 400 400 400 400 400 400 400
+12 requests, the same creator_id:         400 400 400 400 400 429 429 429 429 429 429 429
+```
+
+(The 400s are short texts, refused before the model so the test was quick. The limiter counts them anyway.) So the limit stops one careless caller and does nothing against a script that changes its id on every request. I chose creator-based on purpose: the attack set gives every row its own `creator_id`, and an address-based limit would throttle the whole run to 5 a minute. The cost is that anyone can pass a fresh `creator_id` to get around it. Fixing that means limiting by address as well, with a ceiling high enough not to punish a household sharing one address.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
-
+```bash
+$ python run_attacks.py --flood 15
 ```
 
 ```
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+```
+
+Ten of fifteen were refused. `GET /log` recorded all ten as `rejected` entries, for example:
+
+```json
+{
+  "creator_id": "flood_tester",
+  "event": "rejected",
+  "limit": "5 per 1 minute",
+  "reason": "rate_limited",
+  "status": "rejected",
+  "timestamp": "2026-11-08T00:46:11+00:00"
+}
+```
+
+The run is also in `results/flood_2026-11-07_1646.md`.
 
 ---
 

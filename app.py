@@ -24,6 +24,7 @@ Routes:
     GET  /health      is the service up, and is the model loaded
 """
 
+import hashlib
 import uuid
 
 from flask import Flask, jsonify, request
@@ -160,7 +161,7 @@ def _reject(creator_id: str, status: int, error: str, message: str, **extra):
 
 
 @app.post("/submit")
-# @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
+@limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
@@ -262,6 +263,13 @@ def submit():
         style_score=style_score,
         combined_score=combined_score,
         label=label,
+        # Enough to reconstruct the decision without the code: which bands
+        # turned the score into the label, and which text it was. The text
+        # itself isn't stored; the hash lets a repeat be matched.
+        human_threshold=config.HUMAN_THRESHOLD,
+        ai_threshold=config.AI_THRESHOLD,
+        text_words=len(text.split()),
+        text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
     )
 
     return jsonify({
