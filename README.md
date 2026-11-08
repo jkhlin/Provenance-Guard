@@ -263,6 +263,20 @@ I built this with Claude Code, which wrote most of the code and drafts in this r
 - *What came back:* the placeholder thresholds were 0.35 and 0.65, and my own earlier plan had leaned toward about 0.8 for the AI label. I had it score fourteen texts first. Plain human paragraphs combined at up to 0.86, and generic AI text at about 0.90, so both 0.65 and 0.8 would have labelled real writing as AI.
 - *What I changed:* I set the AI threshold to 0.88 and the human threshold to 0.45. I wrote down that the 0.88 margin is only about 0.02 and that the first AI paragraph (0.83) now lands in "unsure". I accepted that on purpose, because wrongly accusing a writer costs more than missing AI text. All the test texts were written for the tests, so this is thin evidence.
 
+**Unit 8: testing it**
+
+**Moment 3: which signal the typos broke**
+
+- *What I asked for:* a diagnosis of every broken attack, with the stage and mechanism.
+- *What came back:* the attack brief says typos target the style signal, so the obvious write-up was "typos fooled signal two". Before writing that I had it print both scores for EV01. Signal two read it as 1.000 (AI) and was not fooled. Signal one fell to 0.164, because misspelled words become rare sub-word pieces that the language model finds surprising.
+- *What I changed:* the diagnosis names signal one as the stage, and it says my own combining rule amplified it. That led to the Milestone 5 change, since a plain average would have held EV01. I also had it predict the effect of that change from the saved scores before re-running. The re-run matched the prediction exactly, including the three real-human rows that got worse.
+
+**Moment 4: my own tooling was wrong twice**
+
+- *What I asked for:* the before and after attack runs, then the held and broke verdicts filled into the reports.
+- *What came back:* two mistakes of Claude Code's own. The first attempt at the real run was against four stale `app.py` servers left from earlier milestones, because the cleanup killed the launcher but not Flask's reloader child. Later, the step that filled in the Verdict column merged the verdict into the Score cell and dropped a column from the "before" report, and I only noticed because the comparison script parsed zero rows.
+- *What I changed:* I killed every server and reran against one clean process, and I repaired the report. Re-running the comparison then reproduced the original 49 held and 7 broke. Stopping the server with `taskkill /T` is now the way I clean up. The audit log keeps the entries from the aborted attempt, and the README says so.
+
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
 ---
@@ -831,17 +845,37 @@ So the change did what its diagnosis said it would, and also what my Milestone 1
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+After the Milestone 5 change the attack run is 51 held and 5 broke, and criteria 2 and 3 are still MISSED. Criterion 1 has never been run. Below is every one of those, what I'd do, and why I stopped. Nothing here is "I ran out of time": each item is either a change I decided not to make, or something this design cannot do.
 
+One reason applies to all the fixes below, so I'll say it once. The 56 attack rows and the 15 criteria texts are the *same* rows I diagnosed from. A tweak that fixes four of them proves very little, because I'd be tuning to the test. I made one change, measured it, and stopped, so the before and after in this README stay a fair comparison. Each fix below is a plan, and I have not tried any of them.
 
+### Attacks that still get through (5)
 
-**The trade I'd make if this ran for real:**
+| Attack | Combined | Stage | What I'd do | Why I stopped |
+|---|---|---|---|---|
+| **EV02**, "Really." after every sentence | 0.297, human | signal two | Make the sentence-length spread robust: ignore sentences under about 4 words, or use the median deviation instead of the standard deviation, so a few one-word sentences cannot dominate. | It changes signal two itself, which moves every style score and so every threshold I calibrated in Unit 7. I would have to re-score all 15 calibration texts and re-run the attack set, and I'd be fixing the rows I measured on. This is the fix I'd do first. |
+| **EV06**, one very long and one very short sentence | 0.328, human | signal two | Same fix as EV02. | Same reason, and it is one fix for both. |
+| **PI01 and PI02**, injected "instructions" | 0.273 and 0.144, human | signal two (spread), with signal one on short text | The same spread fix, plus a stronger short-text rule: below about 60 words, return *unsure* whatever the scores say. Both texts are only 42 to 45 words. | A short-text rule is a new refusal path in `/submit` and a change to what a writer sees, and I'd want to test it on real short pieces first. Nothing in the code reads the injected words, so the instructions are not obeyed. The damage is that the surrounding text scores as human. |
+| **EV05**, heavy human editing of AI text | 0.161, human | none: the limit of the method | Nothing in this design can fix it. In production I'd stop claiming to detect it: the label would say the score measures how the text reads, not where it came from, and the real answer is provenance metadata or a watermark from the tool that wrote the draft. | Neither signal is wrong. After a heavy rewrite the text is largely human, and no statistic of its surface can see the draft. More tuning would only trade this against writers I'd start accusing. |
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
+Two attacks I count as held deserve a mention, because "held" only means nobody was accused or fooled:
 
+- **FP01, FP06 and PI06** (real human writing) now get *unsure*, where Unit 7's rule gave them *human*. And FP02 to FP05 (plain and technical human writing) were *unsure* before and still are. Six of the seven false-positive texts that get a label (FP07 is the only one called human) are told *unsure*. No one is called AI, which is the property I wanted, but most real writers in that set are told "we can't tell". I'd fix that by giving the style signal a way to say "this is plain and consistent writing" instead of reading it as machine-like, and I haven't, for the same reason as above.
+- **The rate limit does not stop a script that changes `creator_id` on every request.** Twelve ids got twelve through (see Rate Limiting). The attack set cannot show this, because every row has its own id, so the table above hides it. I'd add a second limit keyed on the caller's address, with a ceiling high enough for a shared household. I stopped because it would throttle the attack set and my own test runs to a handful of requests a minute, and I'd have to rework `run_attacks.py` to test it fairly.
 
+### Criteria still missed
+
+| Criterion | Status | What I'd do | Why I stopped |
+|---|---|---|---|
+| **1. My own plain writing** | **Not run**, no verdict | Put ten pieces of my own writing in scenario 1 of `scenarios.py` (at least four plain, each at least 20 words) and run it three times, before and after the change. | It needs writing that only I can supply, and I haven't. This is the most important gap in this submission, because criterion 1 is the one that tells me whether the Milestone 5 change (plain dog paragraph 0.859 to 0.870, now 0.010 under the AI line) accuses a real writer. I won't mark it MET or MISSED without a run. |
+| **2. Far apart, with no human above 0.50** | **MISSED**: gap 0.39 passes, but Dickens 0.749 and Austen 0.571 break the ceiling | Replace the "clearly human" set with passages the language model is unlikely to have memorised, and add a repetition discount to signal one, since Dickens is one phrase repeated ten times. | Swapping the texts after I saw the result would be moving the goalposts, so I won't change the set or the criterion. A real fix to signal one, which reads famous or repetitive prose as machine-made, is a new signal, not a setting. |
+| **3. Three labels, mostly right** | **MISSED** on two of three parts: AI to `ai` 2 of 5 (target 3), human to `human` 3 of 5 (target 4); borderline to `unsure` 5 of 5 passes | The human half is the same two texts as criterion 2, so it is one fix. The AI half needs the AI threshold below 0.88 or a signal that separates generic AI text from plain human text. | No threshold does it. The four AI paragraphs not labelled `ai` score 0.828 to 0.854, while my plain dog paragraph scores 0.870 and the staff's technical-documentation text FP05 scores 0.804. Dropping the line to 0.82 would label both of those human texts as AI. The overlap is in the signals, so I stopped. |
+
+Criteria 4 (appeals) and 5 (bad input) are MET in every trial, before and after.
+
+**The trade I'd make if this ran for real:** I'd keep the threshold for the AI label high and accept that most AI text, including ordinary generic AI paragraphs, would come back *unsure* instead of *ai*, because a wrong accusation is something a writer has to fight and a missed AI paragraph usually costs nobody anything at the moment it happens. The people who pay are the readers, editors and teachers who relied on the label and get "we can't tell" for most AI text, and the honest writers with a plain or formal style, who pay a smaller price in being told "unsure" and having to use the appeal path.
+
+---
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
