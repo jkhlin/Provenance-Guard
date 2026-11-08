@@ -36,10 +36,17 @@
 
 ## What This Does
 
-<!-- The path a submission takes, from arriving to the label a reader sees.
-     Six or seven steps — this is the trace you wrote in Milestone 1. -->
+Provenance Guard is a small web service that reads a piece of writing and says how likely it is to have been written by an AI tool, in words a writer can read. It never gives a verdict it can't back up, and anyone who thinks it got them wrong can appeal. A submission takes seven steps:
 
+1. **The route** (`app.py::submit`). A writer sends `text` and `creator_id`. The route checks the request is usable: a JSON object, a `text` string of at least 20 words and at most 20,000 characters, and a `creator_id`. A bad request stops here with a `400` or `413` in one error shape and leaves a `rejected` entry in the log. A good one gets a fresh `content_id`.
+2. **Signal one, the model signal** (`detector.py::model_signal`). A language model (gpt2) running on this machine reads the first ~300 words and measures how predictable they are. This adds `model_score`.
+3. **Signal two, the style signal** (`stylometry.py::style_signal`). Without understanding a word, it measures the shape of the text, mainly how much sentence length varies. This adds `style_score`.
+4. **The combining rule** (`scoring.py::combine_signals`). Two numbers become one `combined_score`. The signal that reads more human counts for 75%, so the AI end has to be earned by both signals.
+5. **The label** (`scoring.py::score_to_label`). The combined score becomes a `guess` (`human`, `unsure` or `ai`) and a full sentence for a person to read. This is the only part the writer is meant to read.
+6. **The audit log** (`audit.py::log_decision`). The decision is written to `logs/audit.jsonl` with all three scores, the label and a status of `decided`, before the service replies, so a failure while answering can't lose it.
+7. **The response.** The writer gets `content_id`, `guess`, `confidence`, `label`, and the three scores back as JSON. The `content_id` is their handle for an appeal.
 
+An appeal is a separate path. `POST /appeal` takes the `content_id` and the writer's reasoning, checks the original decision exists (a mistyped id gets a `404`), and adds an appeal entry beside it with status `under_review`. The original decision is never overwritten. Nothing in the service re-checks the text or alerts a person, so a human reading the log is what a review currently means.
 
 ---
 
@@ -143,38 +150,28 @@ The placeholder 0.65 would have accused three of the four plain human texts. 0.8
 
 **A submission**
 
-<!-- The response needs content_id, guess, confidence, label, AND both
-     signal scores - model_score and style_score. Unit 8's tools read those
-     two off the response, so leaving them out costs you next unit's
-     diagnostics. -->
+An AI-style paragraph, so it gets the AI label. The response carries `content_id`, `guess`, `confidence`, `label`, and both signal scores, plus the combined score.
 
 ```bash
-$ curl -X POST http://127.0.0.1:5000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"text": "The implementation of the proposed framework requires careful consideration of several key factors. First, it is important to note that the system must be able to handle a wide variety of different inputs. Additionally, the overall performance of the solution depends on a number of important variables.", "creator_id": "jason"}'
+$ curl -X POST http://127.0.0.1:5000/submit   -H "Content-Type: application/json"   -d '{"text": "Climate change is one of the most pressing challenges facing our world today. It is caused primarily by the release of greenhouse gases into the atmosphere. These gases trap heat and lead to rising global temperatures. As a result, many regions are experiencing more extreme weather events. Governments and individuals must work together to reduce emissions. By adopting renewable energy sources, we can build a more sustainable future for generations to come.", "creator_id": "jason"}'
 ```
-
-> Milestone 3 state: signal one only. `style_score` is `null` and `guess`,
-> `confidence` and `label` are placeholders until the second signal, the
-> combining rule and the labels exist.
 
 ```json
 {
-  "confidence": 0.0,
-  "content_id": "4931813a-b6b0-4bf3-8514-f9db3e5ce60d",
-  "guess": "pending",
-  "label": "placeholder",
-  "model_score": 0.8864,
-  "style_score": null
+  "combined_score": 0.9053,
+  "confidence": 0.8106,
+  "content_id": "7b4e8043-53b6-44ef-ae88-a2262ca69f5e",
+  "guess": "ai",
+  "label": "This may have been written with an AI tool. Checks like ours often get plain, simply written text wrong, so this is not a finding. If you wrote it yourself, you can appeal using your submission ID and ask for a review.",
+  "model_score": 0.939,
+  "style_score": 0.8941
 }
 ```
 
-A bad request, to show the refusal shape (HTTP 400):
+A bad request gets the same error shape on every route, and a `rejected` entry in the log:
 
 ```bash
-$ curl -X POST http://127.0.0.1:5000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"text": "hi there", "creator_id": "jason"}'
+$ curl -X POST http://127.0.0.1:5000/submit   -H "Content-Type: application/json"   -d '{"text": "hi there", "creator_id": "jason"}'
 ```
 
 ```json
@@ -186,21 +183,21 @@ $ curl -X POST http://127.0.0.1:5000/submit \
 
 **An appeal**
 
+The writer uses the `content_id` from that response.
+
 ```bash
-$ curl -X POST http://127.0.0.1:5000/appeal \
-  -H "Content-Type: application/json" \
-  -d '{"content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e", "reasoning": "I wrote this myself for a class. I always write in short even sentences."}'
+$ curl -X POST http://127.0.0.1:5000/appeal   -H "Content-Type: application/json"   -d '{"content_id": "7b4e8043-53b6-44ef-ae88-a2262ca69f5e", "reasoning": "I wrote this myself for a class. I always write in short even sentences."}'
 ```
 
 ```json
 {
-  "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
+  "content_id": "7b4e8043-53b6-44ef-ae88-a2262ca69f5e",
   "message": "Your appeal has been recorded and this submission is marked as under review.",
   "status": "under_review"
 }
 ```
 
-That `content_id` came from an earlier `/submit` that was labelled AI (combined 0.9053). An appeal with a mistyped id gets a `404` and no appeal entry:
+A mistyped `content_id` gets a `404` and writes no appeal entry:
 
 ```json
 {
@@ -212,92 +209,33 @@ That `content_id` came from an earlier `/submit` that was labelled AI (combined 
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=5"
+$ curl "http://127.0.0.1:5000/log?limit=2"
 ```
+
+The log is append-only. The original decision stays `decided`, and the appeal sits after it as `under_review`. A second appeal on the same id would add a second entry instead of overwriting anything.
 
 ```json
 {
-  "count": 5,
-  "entries": [
-    {
-      "combined_score": null,
-      "content_id": "4931813a-b6b0-4bf3-8514-f9db3e5ce60d",
-      "creator_id": "jason",
-      "guess": "pending",
-      "label": "placeholder",
-      "model_score": 0.8864,
-      "status": "decided",
-      "style_score": null,
-      "timestamp": "2026-11-07T22:48:02+00:00"
-    },
-    {
-      "combined_score": null,
-      "content_id": "1460dbef-4e71-4060-a499-5c4528ccdfd3",
-      "creator_id": "jason",
-      "guess": "pending",
-      "label": "placeholder",
-      "model_score": 0.3666,
-      "status": "decided",
-      "style_score": null,
-      "timestamp": "2026-11-07T22:48:02+00:00"
-    },
-    {
-      "creator_id": "jason",
-      "event": "rejected",
-      "reason": "missing_field",
-      "status": "rejected",
-      "timestamp": "2026-11-07T22:48:02+00:00"
-    },
-    {
-      "creator_id": "jason",
-      "event": "rejected",
-      "reason": "text_too_short",
-      "status": "rejected",
-      "timestamp": "2026-11-07T22:48:02+00:00"
-    },
-    {
-      "creator_id": "unknown",
-      "event": "rejected",
-      "reason": "invalid_json",
-      "status": "rejected",
-      "timestamp": "2026-11-07T22:48:02+00:00"
-    }
-  ]
-}
-```
-
-And after the appeal above, `curl "http://127.0.0.1:5000/log?limit=9"`, showing only the entries for that `content_id` (the full response also held the other two submissions and four rejected requests). The log is append-only: the original decision stays `decided`, the appeal sits after it as `under_review`, and a second appeal on the same id adds a second entry instead of overwriting anything.
-
-```json
-{
-  "count": 3,
+  "count": 2,
   "entries": [
     {
       "combined_score": 0.9053,
-      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
-      "creator_id": "m5_ai_climate",
+      "content_id": "7b4e8043-53b6-44ef-ae88-a2262ca69f5e",
+      "creator_id": "jason",
       "guess": "ai",
       "label": "This may have been written with an AI tool. Checks like ours often get plain, simply written text wrong, so this is not a finding. If you wrote it yourself, you can appeal using your submission ID and ask for a review.",
       "model_score": 0.939,
       "status": "decided",
       "style_score": 0.8941,
-      "timestamp": "2026-11-07T23:02:32+00:00"
+      "timestamp": "2026-11-08T00:07:02+00:00"
     },
     {
-      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
-      "creator_id": "m5_ai_climate",
+      "content_id": "7b4e8043-53b6-44ef-ae88-a2262ca69f5e",
+      "creator_id": "jason",
       "event": "appeal",
       "reasoning": "I wrote this myself for a class. I always write in short even sentences.",
       "status": "under_review",
-      "timestamp": "2026-11-07T23:02:32+00:00"
-    },
-    {
-      "content_id": "7e2111c5-35f0-438c-98ce-62c0d8d7c56e",
-      "creator_id": "m5_ai_climate",
-      "event": "appeal",
-      "reasoning": "Adding: I can show my drafts.",
-      "status": "under_review",
-      "timestamp": "2026-11-07T23:02:32+00:00"
+      "timestamp": "2026-11-08T00:07:02+00:00"
     }
   ]
 }
@@ -307,17 +245,19 @@ And after the appeal above, `curl "http://127.0.0.1:5000/log?limit=9"`, showing 
 
 ## How I Used AI
 
-**Moment 1**
+I built this with Claude Code, which wrote most of the code and drafts in this repo while I set the goals and checked the results. These are two moments where its first answer was wrong or incomplete and the measurements changed the outcome.
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 1: the style signal**
 
-**Moment 2**
+- *What I asked for:* the second signal in `stylometry.py`: sentence-length spread, type-token ratio and punctuation density, combined into one score.
+- *What came back:* all three measures, implemented and ready to weight equally. Before weighting anything I had it print the raw values for eight texts. Only sentence-length spread separated AI from human (0.14 and 0.24 for the AI texts, 0.65 and 0.93 for the human ones). Type-token ratio was *highest* on the clearly-AI paragraph (0.89 against 0.84 for the quirky human one). Punctuation density didn't separate them either, and a plain human paragraph scored 0.00 because it used only full stops.
+- *What I changed:* I didn't blend all three. Sentence-length spread is the only measure with weight (`STYLE_WEIGHTS` in `stylometry.py`), and the other two are still computed with weight 0, with the reason in a comment and in this README. Counting punctuation would have penalised the plain writer the service most needs to protect.
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+**Moment 2: the thresholds**
+
+- *What I asked for:* the three label texts and the score ranges they cover.
+- *What came back:* the placeholder thresholds were 0.35 and 0.65, and my own earlier plan had leaned toward about 0.8 for the AI label. I had it score fourteen texts first. Plain human paragraphs combined at up to 0.86, and generic AI text at about 0.90, so both 0.65 and 0.8 would have labelled real writing as AI.
+- *What I changed:* I set the AI threshold to 0.88 and the human threshold to 0.45. I wrote down that the 0.88 margin is only about 0.02 and that the first AI paragraph (0.83) now lands in "unsure". I accepted that on purpose, because wrongly accusing a writer costs more than missing AI text. All the test texts were written for the tests, so this is thin evidence.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
