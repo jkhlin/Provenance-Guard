@@ -78,9 +78,13 @@ An appeal is a separate path. `POST /appeal` takes the `content_id` and the writ
 
 ### The combining rule
 
-**The rule:** the AI label has to be earned by both signals. When the two signals split, the combined score leans toward the one that reads more human: the more-human signal counts 75% and the more-AI signal 25%. When they agree this equals their shared value, and the more they disagree the more the score is pulled away from the AI end.
+**The rule:** the two signals are averaged with equal weight. The more-human signal counts `WEIGHT_MORE_HUMAN_SIGNAL` and the more-AI signal the rest, and that weight is now 0.5, which is a plain average.
 
-**The numbers:** `combined = 0.75 * min(model_score, style_score) + 0.25 * max(model_score, style_score)`. The 0.75 is `WEIGHT_MORE_HUMAN_SIGNAL` in `config.py`. Why asymmetric: wrongly accusing a real writer costs far more than missing some AI text, so I am choosing to let some AI through in order to accuse fewer people. A plain average treats the two errors as equal.
+**The numbers:** `combined = w * min(model_score, style_score) + (1 - w) * max(model_score, style_score)` with `w = WEIGHT_MORE_HUMAN_SIGNAL = 0.5` in `config.py`, so `combined = (model_score + style_score) / 2`. The thresholds are unchanged: `HUMAN_THRESHOLD = 0.45`, `AI_THRESHOLD = 0.88`.
+
+**History:** in Unit 7 the weight was **0.75**, so the AI label had to be earned by both signals and a split pulled the score toward the human reading. I did that because wrongly accusing a real writer costs far more than missing AI text. Unit 8's attack run showed the cost, that one cheaply fooled signal then decided the whole score, so Milestone 5 of Unit 8 changed it to 0.5. The reasoning and the before and after are under "The Improvement".
+
+> Every combined score quoted in the Unit 7 parts of this README (the calibration table, the split cases and the threshold table below) was computed with the 0.75 weight. Under 0.5 they are a little higher for text where the signals split, for example the Darwin passage is about 0.50 instead of 0.415, still *unsure*.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -702,22 +706,126 @@ So the two decisions I took in Milestone 1 and Unit 7 to keep real writers safe,
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** one setting. `WEIGHT_MORE_HUMAN_SIGNAL` in `config.py`, from **0.75 to 0.5**. That turns the combining rule (`scoring.py::combine_signals`) from "the more-human signal counts 75%" into a plain average of the two signals. Nothing else changed: no signal, no threshold (`HUMAN_THRESHOLD` 0.45 and `AI_THRESHOLD` 0.88 stay), no label text, no input check. I updated the comments and the combining-rule section of this README to say 0.5.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** the second pattern in my Milestone 4 diagnosis. One cheaply fooled signal decided the whole score, because my Unit 7 rule gave the more-human signal 75% of the weight. EV01 (typos pushed signal one to 0.164 while signal two still said 1.000) and EV09 (a human opening paragraph pulled signal two to 0.331 while signal one still said 0.704) both broke because of it, and a plain average would have held both. It was also the only cause I could isolate to a single number I'd chosen myself.
+
+**What I predicted before re-running.** The signals are deterministic and only the combining step changed, so I computed the effect from the scores I had already saved. I expected: EV01 and EV09 flip from broke to held; no attack newly breaks; three real-human rows (FP01, FP06, PI06) move from *human* to *unsure*; no criterion changes verdict; criterion 3's AI half goes from 1/5 to 2/5; criterion 2's ceiling gets worse because Dickens rises from 0.649 to 0.749.
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+`python run_attacks.py --set attack_set --label after`, same set, same rules for held and broke as the before run, one clean server, report in `results/attack_run_2026-11-07_1807_after.md` (the before report is `results/attack_run_2026-11-07_1655_before.md`).
 
+| Family | Before: held / broke | After: held / broke |
+|---|---|---|
+| evasion (10) | 5 / 5 | **7 / 3** |
+| false positive (8) | 8 / 0 | 8 / 0 |
+| prompt injection (6) | 4 / 2 | 4 / 2 |
+| malformed requests (20) | 20 / 0 | 20 / 0 |
+| flood, same creator (12) | 12 / 0 | 12 / 0 |
+| **Total (56)** | **49 / 7** | **51 / 5** |
 
+Every attack side by side. Five rows changed, and they are exactly the five I predicted:
 
-**Did it help, and how do I know:**
+| ID | Family | Before: combined | guess | verdict | After: combined | guess | verdict | |
+|---|---|---|---|---|---|---|---|---|
+| EV01 | evasion | 0.373 | human | BROKE | 0.582 | unsure | HELD | **changed** |
+| EV02 | evasion | 0.149 | human | BROKE | 0.297 | human | BROKE |  |
+| EV03 | evasion | 0.460 | unsure | HELD | 0.529 | unsure | HELD |  |
+| EV04 | evasion | 0.709 | unsure | HELD | 0.806 | unsure | HELD |  |
+| EV05 | evasion | 0.080 | human | BROKE | 0.161 | human | BROKE |  |
+| EV06 | evasion | 0.206 | human | BROKE | 0.328 | human | BROKE |  |
+| EV07 | evasion | 0.521 | unsure | HELD | 0.543 | unsure | HELD |  |
+| EV08 | evasion | — | — | HELD | — | — | HELD |  |
+| EV09 | evasion | 0.424 | human | BROKE | 0.518 | unsure | HELD | **changed** |
+| EV10 | evasion | 0.625 | unsure | HELD | 0.743 | unsure | HELD |  |
+| FP01 | false_positive | 0.421 | human | HELD | 0.487 | unsure | HELD | **changed** |
+| FP02 | false_positive | 0.779 | unsure | HELD | 0.819 | unsure | HELD |  |
+| FP03 | false_positive | 0.711 | unsure | HELD | 0.742 | unsure | HELD |  |
+| FP04 | false_positive | 0.646 | unsure | HELD | 0.708 | unsure | HELD |  |
+| FP05 | false_positive | 0.802 | unsure | HELD | 0.804 | unsure | HELD |  |
+| FP06 | false_positive | 0.409 | human | HELD | 0.567 | unsure | HELD | **changed** |
+| FP07 | false_positive | 0.220 | human | HELD | 0.441 | human | HELD |  |
+| FP08 | false_positive | — | — | HELD | — | — | HELD |  |
+| PI01 | prompt_injection | 0.178 | human | BROKE | 0.273 | human | BROKE |  |
+| PI02 | prompt_injection | 0.114 | human | BROKE | 0.144 | human | BROKE |  |
+| PI03 | prompt_injection | 0.577 | unsure | HELD | 0.583 | unsure | HELD |  |
+| PI04 | prompt_injection | 0.501 | unsure | HELD | 0.502 | unsure | HELD |  |
+| PI05 | prompt_injection | 0.513 | unsure | HELD | 0.555 | unsure | HELD |  |
+| PI06 | prompt_injection | 0.429 | human | HELD | 0.472 | unsure | HELD | **changed** |
+| MF01 | malformed | — | — | HELD | — | — | HELD |  |
+| MF02 | malformed | — | — | HELD | — | — | HELD |  |
+| MF03 | malformed | — | — | HELD | — | — | HELD |  |
+| MF04 | malformed | — | — | HELD | — | — | HELD |  |
+| MF05 | malformed | — | — | HELD | — | — | HELD |  |
+| MF06 | malformed | — | — | HELD | — | — | HELD |  |
+| MF07 | malformed | — | — | HELD | — | — | HELD |  |
+| MF08 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ01 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ02 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ03 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ04 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ05 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ06 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ07 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ08 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ09 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ10 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ11 | malformed | — | — | HELD | — | — | HELD |  |
+| RQ12 | malformed | — | — | HELD | — | — | HELD |  |
+| FL01_01 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_02 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_03 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_04 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_05 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_06 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_07 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_08 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_09 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_10 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_11 | flood_same_creator | — | — | HELD | — | — | HELD |  |
+| FL01_12 | flood_same_creator | — | — | HELD | — | — | HELD |  |
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+### Criteria, before and after
 
+Criteria 2 to 5, three trials each (`run_eval.py --label after`, report in `results/run_2026-11-07_1811_after_c2-5.md`). All three trials were again identical. **Criterion 1 is still not run** (it needs ten pieces of my own writing), so it is missing from both sets and I can't say what this change did to it.
 
+| Criterion | Target | Before (all 3 runs) | After (all 3 runs) | Verdict before | Verdict after |
+|---|---|---|---|---|---|
+| 1. My own plain writing is almost never called AI | at most 1 of 10 labelled `ai` | not run | not run | NOT RUN | NOT RUN |
+| 2. Clearly-AI and clearly-human text score far apart | gap at least 0.30 and no human above 0.50 | gap 0.43, max human 0.65 | gap 0.39, max human 0.75 | MISSED | **MISSED** (ceiling worse) |
+| 3. All three labels reachable and mostly right | at least 3/5 AI to `ai`, 4/5 human to `human`, 4/5 borderline to `unsure` | 1/5, 3/5, 5/5 | **2/5**, 3/5, 5/5 | MISSED | **MISSED** (AI half closer) |
+| 4. An appeal always changes status and leaves a record | 10/10 and 5/5 | 10/10, 5/5 | 10/10, 5/5 | MET | MET |
+| 5. Bad input is refused cleanly | 8/8 | 8/8 | 8/8 | MET | MET |
+
+The criteria 2 and 3 texts, one by one:
+
+| Text | model | style | Before: combined | label | After: combined | label |
+|---|---|---|---|---|---|---|
+| AI: green spaces | 0.899 | 0.917 | 0.904 | ai | 0.908 | ai |
+| AI: cybersecurity | 0.788 | 0.868 | 0.808 | unsure | 0.828 | unsure |
+| AI: reading | 0.771 | 0.917 | 0.808 | unsure | 0.844 | unsure |
+| AI: time management | 0.790 | 0.917 | 0.822 | unsure | 0.854 | unsure |
+| AI: energy storage | 0.853 | 0.917 | 0.869 | unsure | 0.885 | ai |
+| human: Austen | 0.678 | 0.465 | 0.518 | unsure | 0.571 | unsure |
+| human: Dickens | 0.948 | 0.549 | 0.649 | unsure | 0.749 | unsure |
+| human: Darwin | 0.317 | 0.500 | 0.362 | human | 0.408 | human |
+| human: Twain | 0.474 | 0.083 | 0.181 | human | 0.279 | human |
+| human: Melville | 0.425 | 0.333 | 0.356 | human | 0.379 | human |
+| borderline: sleep (edited AI) | 0.684 | 0.727 | 0.695 | unsure | 0.705 | unsure |
+| borderline: libraries (mixed) | 0.571 | 0.614 | 0.582 | unsure | 0.592 | unsure |
+| borderline: bus (plain) | 0.725 | 0.500 | 0.556 | unsure | 0.613 | unsure |
+| borderline: committee (formal) | 0.751 | 0.705 | 0.716 | unsure | 0.728 | unsure |
+| borderline: new year (non-native) | 0.791 | 0.917 | 0.823 | unsure | 0.854 | unsure |
+
+**Did it help, and how do I know:** modestly, and with a cost. It fixed the two attacks it was aimed at, EV01 and EV09 no longer get a human label (49 held and 7 broke became 51 and 5), and it broke nothing new. But no criterion changed verdict, and the trade is real:
+
+- **Three real-human attack rows moved from "human" to "unsure"** (FP01, a plain camping trip; FP06, a formal job enquiry; PI06). Nobody was accused, but a person who used to be told "we think this was written by a person" is now told "we can't tell". That is a worse experience for the writers this service is meant to protect.
+- **Criterion 2's ceiling miss got worse**: Dickens went from 0.649 to 0.749, because averaging no longer discounts signal one's wrong 0.948 as much. The gap shrank from 0.43 to 0.39 but still passes.
+- **Criterion 3's AI half improved from 1/5 to 2/5**, because averaging lifted one more AI paragraph (energy storage, 0.869 to 0.885) over the line. That is still short of the target of 3, and energy storage clears 0.88 by only 0.005, so I don't trust it.
+- **It narrows the safety margin for plain human writing, which I can't measure properly yet.** My plain dog paragraph from Milestone 5 now combines at 0.870 instead of 0.859, 0.010 under the AI line instead of 0.021. Criterion 1 is the criterion that would show whether that costs a real writer an accusation, and it has not been run.
+
+So the change did what its diagnosis said it would, and also what my Milestone 1 design said it would risk. I chose a rule that favours the human reading to protect writers, and measuring it showed it was costing me evasions; removing it gives some of that back and spends some of the protection. It doesn't touch the largest cause of failure, which is that both signals read how even and predictable a text is instead of who wrote it.
 
 ---
 

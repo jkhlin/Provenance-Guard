@@ -59,11 +59,14 @@ MAX_REASONING_CHARS = 2_000   # an appeal's reasoning
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # The combining rule (scoring.py::combine_signals): when the two signals split,
 # the one that reads MORE HUMAN counts for this much, and the more-AI one for
-# the rest. Wrongly accusing a real writer costs more than missing some AI
-# text, so the AI end has to be earned by both signals. 0.5 would be a plain
-# average. The reasoning is in the README, under "The combining rule".
+# the rest. 0.5 is a plain average; higher leans toward the human reading.
+#
+# Unit 7 set this to 0.75, to keep real writers off the AI label. Unit 8's
+# attack run showed the cost: one cheaply fooled signal then decides the whole
+# score (typos on signal one, chopped sentences on signal two). Changed to 0.5
+# in unit 8, Milestone 5. The before/after is in the README, "The Improvement".
 
-WEIGHT_MORE_HUMAN_SIGNAL = 0.75
+WEIGHT_MORE_HUMAN_SIGNAL = 0.5
 
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────

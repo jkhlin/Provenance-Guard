@@ -23,17 +23,20 @@ def combine_signals(model_score: float, style_score: float) -> float:
     """
     Combine two 0-1 signals into one 0-1 score. Higher means more likely AI.
 
-    The rule: the AI end has to be earned by BOTH signals. The signal that reads
-    more human counts for `WEIGHT_MORE_HUMAN_SIGNAL` (0.75) and the one that
-    reads more AI for the remaining 0.25:
+    The rule: the signal that reads more human counts for
+    `WEIGHT_MORE_HUMAN_SIGNAL` and the one that reads more AI for the rest:
 
-        combined = 0.75 * min(model, style) + 0.25 * max(model, style)
+        combined = w * min(model, style) + (1 - w) * max(model, style)
 
-    When the signals agree this is their shared value. When they split, the
-    result is pulled toward the human reading, so a single signal at 0.9 with
-    the other at 0.1 lands at 0.30 rather than 0.50. That is the false-positive
-    decision from Milestone 1: some AI text will slip through as "unsure" so
-    that fewer real writers are accused.
+    In unit 7 `w` was 0.75, so the AI end had to be earned by both signals. The
+    unit 8 attack run showed that let one cheaply fooled signal decide the
+    whole score (EV01, EV09), so it is now 0.5, a plain average. With 0.5 the
+    min/max form is the same as averaging; it stays in this shape so the weight
+    in config.py is the only thing to change.
+
+    The trade: more real writing now lands in "unsure" instead of "human" (the
+    attack set's FP01, FP06 and PI06), in return for fewer evasions getting a
+    human label.
 
     What it cannot fix: a writer both signals misread. Plain, even prose scores
     high on both, so there is no disagreement to lean on.
